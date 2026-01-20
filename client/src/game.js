@@ -1,115 +1,127 @@
-const MAP_WIDTH = 15;
-const MAP_HEIGHT = 13;
-const TILE_SIZE = 64; 
-const socket = io(); 
+const socket = io();
+const TILE_SIZE = 64;
 
+// --- CENA: MENU ---
+class MenuScene extends Phaser.Scene {
+    constructor() { super('MenuScene'); }
+    preload() { this.load.spritesheet('tiles', 'assets/tiles.png', { frameWidth: 64, frameHeight: 64 }); }
+    create() {
+        this.add.rectangle(480, 416, 960, 832, 0x111111);
+        this.add.text(480, 300, 'BOMBINHO', { fontSize: '80px', fontStyle: 'bold' }).setOrigin(0.5);
+        const btn = this.add.text(480, 500, 'JOGAR', { fontSize: '40px', backgroundColor: '#0a0', padding: 20 })
+            .setOrigin(0.5).setInteractive({ useHandCursor: true });
+        btn.on('pointerdown', () => socket.emit('requestMap'));
+        socket.once('mapInit', (data) => this.scene.start('GameScene', data));
+    }
+}
+
+// --- CENA: GAME OVER ---
+class GameOverScene extends Phaser.Scene {
+    constructor() { super('GameOverScene'); }
+    create() {
+        this.add.rectangle(480, 416, 960, 832, 0x000000, 0.8);
+        this.add.text(480, 300, 'GAME OVER', { fontSize: '80px', fill: '#f00' }).setOrigin(0.5);
+        
+        const retry = this.add.text(480, 450, 'TENTAR NOVAMENTE', { fontSize: '30px', backgroundColor: '#333', padding: 15 })
+            .setOrigin(0.5).setInteractive({ useHandCursor: true });
+        
+        const exit = this.add.text(480, 550, 'SAIR', { fontSize: '30px', backgroundColor: '#333', padding: 15 })
+            .setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+        retry.on('pointerdown', () => socket.emit('requestMap'));
+        exit.on('pointerdown', () => window.location.reload());
+        
+        socket.once('mapInit', (data) => this.scene.start('GameScene', data));
+    }
+}
+
+// --- CENA: JOGO ---
 class GameScene extends Phaser.Scene {
     constructor() {
         super('GameScene');
         this.players = {};
         this.isMoving = false;
-        // Mapeamento dos frames conforme a sua imagem vertical
-        this.directionMap = {
-            'down': 0,
-            'right': 1,
-            'left': 2,
-            'up': 3
-        };
-    }
-    
-    init(data) {
-        this.grid = data.grid;
-        this.existingPlayers = data.existingPlayers;
+        this.directionMap = { 'down': 0, 'right': 1, 'left': 2, 'up': 3 };
     }
 
+    init(data) { this.grid = data.grid; this.existingPlayers = data.existingPlayers; }
+
     preload() {
-        if (!this.textures.exists('tiles')) {
-            this.load.spritesheet('tiles', 'assets/tiles.png', { frameWidth: 64, frameHeight: 64 });
-        }
-        // Alterado para spritesheet para reconhecer os frames individuais
-        this.load.spritesheet('player_sprite', 'assets/player.png', { frameWidth: 64, frameHeight: 64 });
+        this.load.spritesheet('tiles', 'assets/tiles.png', { frameWidth: 64, frameHeight: 64 });
+        this.load.spritesheet('player', 'assets/player.png', { frameWidth: 64, frameHeight: 64 });
     }
 
     create() {
         this.players = {};
+        this.isMoving = false; // Reset trava de movimento
 
-        // 1. Chão de Grama Permanente (Layer 0)
-        const grassData = Array(MAP_HEIGHT).fill().map(() => Array(MAP_WIDTH).fill(0));
-        const grassMap = this.make.tilemap({ data: grassData, tileWidth: TILE_SIZE, tileHeight: TILE_SIZE });
-        const grassTileset = grassMap.addTilesetImage('tiles');
-        grassMap.createLayer(0, grassTileset, 0, 0).setDepth(0);
+        // Mapa Fundo
+        const grassMap = this.make.tilemap({ data: Array(13).fill().map(() => Array(15).fill(0)), tileWidth: 64, tileHeight: 64 });
+        grassMap.createLayer(0, grassMap.addTilesetImage('tiles'), 0, 0);
 
-        // 2. Objetos Dinâmicos (Layer 1)
-        const map = this.make.tilemap({ data: this.grid, tileWidth: TILE_SIZE, tileHeight: TILE_SIZE });
-        const tileset = map.addTilesetImage('tiles'); 
-        this.dynamicLayer = map.createLayer(0, tileset, 0, 0).setDepth(1);
-        
-        for (let y = 0; y < MAP_HEIGHT; y++) {
-            for (let x = 0; x < MAP_WIDTH; x++) {
-                if (this.grid[y][x] === 0) this.dynamicLayer.putTileAt(-1, x, y);
-            }
-        }
+        // Mapa Dinâmico
+        this.map = this.make.tilemap({ data: this.grid, tileWidth: 64, tileHeight: 64 });
+        this.layer = this.map.createLayer(0, this.map.addTilesetImage('tiles'), 0, 0).setDepth(1);
+        this.layer.forEachTile(t => { if (t.index === 0) this.layer.removeTileAt(t.x, t.y); });
 
-        for (const id in this.existingPlayers) this.addPlayer(this.existingPlayers[id]);
+        // HUD
+        const hudStyle = { font: 'bold 20px Arial', fill: '#fff', stroke: '#000', strokeThickness: 4 };
+        this.uiB = this.add.text(20, 20, 'BOMBAS: 1', hudStyle).setDepth(100);
+        this.uiR = this.add.text(180, 20, 'ALCANCE: 1', hudStyle).setDepth(100);
+        this.uiS = this.add.text(360, 20, 'VELOCIDADE: 1', hudStyle).setDepth(100);
+
+        Object.values(this.existingPlayers).forEach(p => this.addPlayer(p));
         this.cursors = this.input.keyboard.createCursorKeys();
-        this.setupHUD();
-        this.setupSocketEvents();
+        this.setupSocket();
     }
 
-    setupHUD() {
-        const style = { font: 'bold 20px Arial', fill: '#ffffff', stroke: '#000', strokeThickness: 4 };
-        this.bombText = this.add.text(20, 20, '💣: 1', style).setDepth(100);
-        this.rangeText = this.add.text(120, 20, '🔥: 1', style).setDepth(100);
-        this.speedText = this.add.text(220, 20, '👟: 1', style).setDepth(100);
-    }
+    setupSocket() {
+        socket.off('playerMoved'); socket.off('tileUpdate'); socket.off('newPlayer');
+        socket.off('removePlayer'); socket.off('bombExploded'); socket.off('statsUpdate');
+        socket.off('playerKilled');
 
-    setupSocketEvents() {
-        socket.off('statsUpdate').on('statsUpdate', (data) => {
-            this.bombText.setText(`💣: ${data.bombs}`);
-            this.rangeText.setText(`🔥: ${data.range}`);
-            this.speedText.setText(`👟: ${data.speed}`);
-        });
-
-        // Agora recebe a direção do servidor
-        socket.off('playerMoved').on('playerMoved', (data) => this.moveSprite(data.id, data.x, data.y, data.direction, data.duration));
-        
-        socket.off('newPlayer').on('newPlayer', (info) => this.addPlayer(info));
-
-        socket.off('tileUpdate').on('tileUpdate', (data) => {
-            if (this.dynamicLayer) {
-                const tileId = (data.type === 0) ? -1 : data.type;
-                this.dynamicLayer.putTileAt(tileId, data.x, data.y);
-            }
-        });
-
-        socket.off('bombExploded').on('bombExploded', (data) => {
-            data.affectedTiles.forEach(tile => {
-                const cx = tile.x * TILE_SIZE + 32, cy = tile.y * TILE_SIZE + 32;
-                const fire = this.add.rectangle(cx, cy, 60, 60, 0xffa500, 0.8).setDepth(5);
-                this.tweens.add({ targets: fire, alpha: 0, scale: 1.2, duration: 400, onComplete: () => fire.destroy() });
+        socket.on('newPlayer', p => this.addPlayer(p));
+        socket.on('playerMoved', d => {
+            const s = this.players[d.id];
+            if (!s) return;
+            s.setFrame(this.directionMap[d.direction]);
+            this.tweens.add({
+                targets: s, x: d.x * 64 + 32, y: d.y * 64 + 32,
+                duration: d.duration,
+                onComplete: () => { if (d.id === socket.id) this.isMoving = false; }
             });
         });
-
-        socket.off('playerEliminated').on('playerEliminated', (id) => {
-            if (id === socket.id) { alert("Você morreu!"); location.reload(); }
+        socket.on('tileUpdate', d => {
+            if (d.type === 0) this.layer.removeTileAt(d.x, d.y);
+            else this.layer.putTileAt(d.type, d.x, d.y);
         });
-
-        socket.off('removePlayer').on('removePlayer', (id) => {
-            if (this.players[id]) { this.players[id].destroy(); delete this.players[id]; }
+        socket.on('statsUpdate', d => {
+            this.uiB.setText(`BOMBAS: ${d.bombs}`);
+            this.uiR.setText(`ALCANCE: ${d.range}`);
+            this.uiS.setText(`VELOCIDADE: ${d.speed}`);
         });
+        socket.on('bombExploded', d => {
+            d.affectedTiles.forEach(t => {
+                const fire = this.add.rectangle(t.x * 64 + 32, t.y * 64 + 32, 60, 60, 0xff4500, 0.8).setDepth(5);
+                this.tweens.add({ targets: fire, alpha: 0, scale: 0.2, duration: 400, onComplete: () => fire.destroy() });
+            });
+        });
+        socket.on('playerKilled', id => {
+            if (id === socket.id) this.scene.start('GameOverScene');
+            else if (this.players[id]) { this.players[id].destroy(); delete this.players[id]; }
+        });
+        socket.on('removePlayer', id => { if (this.players[id]) { this.players[id].destroy(); delete this.players[id]; }});
     }
 
     addPlayer(info) {
         if (this.players[info.id]) return;
-        // Inicia o sprite com o frame 0 (down)
-        const sprite = this.add.sprite(info.x * TILE_SIZE + 32, info.y * TILE_SIZE + 32, 'player_sprite', 0).setDepth(10);
-        this.players[info.id] = sprite;
-        if (info.id === socket.id) this.self = sprite;
+        const s = this.add.sprite(info.x * 64 + 32, info.y * 64 + 32, 'player', 0).setDepth(10);
+        this.players[info.id] = s;
+        if (info.id === socket.id) this.self = s;
     }
 
     update() {
         if (!this.self || this.isMoving) return;
-        if (Phaser.Input.Keyboard.JustDown(this.cursors.space)) socket.emit('placeBomb');
 
         let dir = null;
         if (this.cursors.left.isDown) dir = 'left';
@@ -117,37 +129,16 @@ class GameScene extends Phaser.Scene {
         else if (this.cursors.up.isDown) dir = 'up';
         else if (this.cursors.down.isDown) dir = 'down';
 
-        if (dir) { 
-            this.isMoving = true; 
-            socket.emit('playerMovement', { direction: dir }); 
-        }
-    }
-
-    moveSprite(id, gx, gy, direction, dur) {
-        const sprite = this.players[id];
-        if (!sprite) return;
-
-        // Atualiza o frame do sprite baseado na direção recebida
-        if (direction && this.directionMap[direction] !== undefined) {
-            sprite.setFrame(this.directionMap[direction]);
+        if (dir) {
+            this.isMoving = true; // Trava o envio de novos comandos até o tween terminar
+            socket.emit('playerMovement', { direction: dir });
         }
 
-        if (dur === 0) { 
-            if (id === socket.id) this.isMoving = false; 
-            return; 
+        if (Phaser.Input.Keyboard.JustDown(this.cursors.space)) {
+            socket.emit('placeBomb');
         }
-
-        this.tweens.add({
-            targets: sprite, 
-            x: gx * TILE_SIZE + 32, 
-            y: gy * TILE_SIZE + 32,
-            duration: dur, 
-            ease: 'Linear', 
-            onComplete: () => { if (id === socket.id) this.isMoving = false; }
-        });
     }
 }
 
-const config = { type: Phaser.AUTO, width: MAP_WIDTH * TILE_SIZE, height: MAP_HEIGHT * TILE_SIZE, parent: 'game-container', scene: [GameScene] };
-const game = new Phaser.Game(config);
-socket.on('mapInit', (data) => { game.scene.start('GameScene', data); });
+const config = { type: Phaser.AUTO, width: 960, height: 832, parent: 'game-container', scene: [MenuScene, GameScene, GameOverScene] };
+new Phaser.Game(config);
