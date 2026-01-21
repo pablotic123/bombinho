@@ -16,7 +16,8 @@ const TILE = {
     ITEM_BOMB: 4, ITEM_FLAME: 5, ITEM_SPEED: 6 
 };
 
-const SPAWN_POINTS = [{ x: 1, y: 1 }, { x: 13, y: 1 }, { x: 1, y: 11 }, { x: 13, y: 11 }];
+const PLAYER_COLORS = [0xb0e0e6, 0xd8bfd8, 0xffdab9, 0xf8f8ff, 0xf0e68c, 0xf4500];
+const SPAWN_POINTS = [{ x: 1, y: 1 }, { x: 13, y: 1 }, { x: 1, y: 11 }, { x: 13, y: 11 }, { x: 1, y: 6 }, { x: 13, y: 6 }];
 let gameState = { map: [], players: {} };
 
 function initializeMap() {
@@ -91,10 +92,11 @@ function handleExplosion(bx, by, socketId) {
 io.on('connection', (socket) => {
     socket.on('requestMap', () => {
         if (Object.keys(gameState.players).length === 0) initializeMap(); // Reinicia mapa se for o primeiro
-        const spawn = SPAWN_POINTS[Object.keys(gameState.players).length % 4];
+        const playerIndex = Object.keys(gameState.players).length % 6;
+        const spawn = SPAWN_POINTS[playerIndex];
         gameState.players[socket.id] = {
-            id: socket.id, x: spawn.x, y: spawn.y,
-            currentBombs: 0, maxBombs: 1, range: 1, moveDuration: 200, speedLevel: 1
+            id: socket.id, x: spawn.x, y: spawn.y, color: PLAYER_COLORS[playerIndex % PLAYER_COLORS.length],
+            currentBombs: 0, maxBombs: 1, range: 1, moveDuration: 150, speedLevel: 1
         };
         socket.emit('mapInit', { grid: gameState.map, existingPlayers: gameState.players });
         socket.broadcast.emit('newPlayer', gameState.players[socket.id]);

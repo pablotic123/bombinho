@@ -88,6 +88,7 @@ class GameScene extends Phaser.Scene {
             this.tweens.add({
                 targets: s, x: d.x * 64 + 32, y: d.y * 64 + 32,
                 duration: d.duration,
+                ease: 'Power1',
                 onComplete: () => { if (d.id === socket.id) this.isMoving = false; }
             });
         });
@@ -115,7 +116,10 @@ class GameScene extends Phaser.Scene {
 
     addPlayer(info) {
         if (this.players[info.id]) return;
-        const s = this.add.sprite(info.x * 64 + 32, info.y * 64 + 32, 'player', 0).setDepth(10);
+        const s = this.add.sprite(info.x * 64 + 32, info.y * 64 + 32, 'player', 0).setDepth(10);        
+        if (info.color) {
+            s.setTint(info.color);
+        }
         this.players[info.id] = s;
         if (info.id === socket.id) this.self = s;
     }
