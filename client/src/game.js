@@ -35,6 +35,22 @@ class GameOverScene extends Phaser.Scene {
     }
 }
 
+// --- CENA: VITORIA ---
+class VictoryScene extends Phaser.Scene {
+    constructor() { super('VictoryScene'); }
+    init(data) { this.winnerName = data.name; }
+    create() {
+        this.add.rectangle(480, 416, 960, 832, 0x000, 0.85);
+        this.add.text(480, 300, 'VITÓRIA!', { fontSize: '80px', fill: '#FFD700', fontStyle: 'bold' }).setOrigin(0.5);
+        this.add.text(480, 400, `${this.winnerName} explodiu a concorrência!`, { fontSize: '28px' }).setOrigin(0.5);
+        
+        const btn = this.add.text(480, 550, 'JOGAR NOVAMENTE', { backgroundColor: '#0a0', padding: 15 })
+            .setOrigin(0.5).setInteractive({ useHandCursor: true });
+        
+        btn.on('pointerdown', () => window.location.reload());
+    }
+}
+
 // --- CENA: JOGO ---
 class GameScene extends Phaser.Scene {
     constructor() {
@@ -54,6 +70,9 @@ class GameScene extends Phaser.Scene {
     create() {
         this.players = {};
         this.isMoving = false; // Reset trava de movimento
+        const hudY = 25;
+        const iconScale = 0.5;
+        const textStyle = { font: 'bold 22px Arial', fill: '#fff', stroke: '#000', strokeThickness: 3 };
 
         // Mapa Fundo
         const grassMap = this.make.tilemap({ data: Array(13).fill().map(() => Array(15).fill(0)), tileWidth: 64, tileHeight: 64 });
@@ -65,10 +84,17 @@ class GameScene extends Phaser.Scene {
         this.layer.forEachTile(t => { if (t.index === 0) this.layer.removeTileAt(t.x, t.y); });
 
         // HUD
-        const hudStyle = { font: 'bold 20px Arial', fill: '#fff', stroke: '#000', strokeThickness: 4 };
-        this.uiB = this.add.text(20, 20, 'BOMBAS: 1', hudStyle).setDepth(100);
-        this.uiR = this.add.text(180, 20, 'ALCANCE: 1', hudStyle).setDepth(100);
-        this.uiS = this.add.text(360, 20, 'VELOCIDADE: 1', hudStyle).setDepth(100);
+        // --- Ícone de Bomba (Tile 3) ---
+        this.add.sprite(40, hudY, 'tiles', 3).setScale(iconScale).setDepth(100);
+        this.uiB = this.add.text(65, hudY - 12, '1', textStyle).setDepth(100);
+
+        // --- Ícone de Fogo/Alcance (Tile 5) ---
+        this.add.sprite(140, hudY, 'tiles', 5).setScale(iconScale).setDepth(100);
+        this.uiR = this.add.text(165, hudY - 12, '1', textStyle).setDepth(100);
+
+        // --- Ícone de Velocidade (Tile 6) ---
+        this.add.sprite(240, hudY, 'tiles', 6).setScale(iconScale).setDepth(100);
+        this.uiS = this.add.text(265, hudY - 12, '1', textStyle).setDepth(100);
 
         Object.values(this.existingPlayers).forEach(p => this.addPlayer(p));
         this.cursors = this.input.keyboard.createCursorKeys();
@@ -97,9 +123,9 @@ class GameScene extends Phaser.Scene {
             else this.layer.putTileAt(d.type, d.x, d.y);
         });
         socket.on('statsUpdate', d => {
-            this.uiB.setText(`BOMBAS: ${d.bombs}`);
-            this.uiR.setText(`ALCANCE: ${d.range}`);
-            this.uiS.setText(`VELOCIDADE: ${d.speed}`);
+            if (this.uiB) this.uiB.setText(d.bombs);
+            if (this.uiR) this.uiR.setText(d.range);
+            if (this.uiS) this.uiS.setText(d.speed);
         });
         socket.on('bombExploded', d => {
             d.affectedTiles.forEach(t => {
@@ -111,16 +137,30 @@ class GameScene extends Phaser.Scene {
             if (id === socket.id) this.scene.start('GameOverScene');
             else if (this.players[id]) { this.players[id].destroy(); delete this.players[id]; }
         });
-        socket.on('removePlayer', id => { if (this.players[id]) { this.players[id].destroy(); delete this.players[id]; }});
+        socket.on('removePlayer', id => {
+            if (this.players[id]) {
+                this.players[id].destroy(); 
+                delete this.players[id]; 
+            }});
+        socket.on('victory', (data) => {
+            this.scene.start('VictoryScene', data);
+        });
     }
 
     addPlayer(info) {
         if (this.players[info.id]) return;
+        
         const s = this.add.sprite(info.x * 64 + 32, info.y * 64 + 32, 'player', 0).setDepth(10);        
+        
         if (info.color) {
             s.setTint(info.color);
         }
+        
+        // Adiciona o nome logo acima do sprite
+        s.tag = this.add.text(s.x, s.y - 45, info.name, { fontSize: '14px', fontStyle: 'bold', stroke: '#000', strokeThickness: 2 }).setOrigin(0.5).setDepth(11);
+        
         this.players[info.id] = s;
+        
         if (info.id === socket.id) this.self = s;
     }
 
@@ -132,6 +172,10 @@ class GameScene extends Phaser.Scene {
         else if (this.cursors.right.isDown) dir = 'right';
         else if (this.cursors.up.isDown) dir = 'up';
         else if (this.cursors.down.isDown) dir = 'down';
+
+        Object.values(this.players).forEach(p => {
+            if(p.tag) { p.tag.x = p.x; p.tag.y = p.y - 45; }
+        });
 
         if (dir) {
             this.isMoving = true; // Trava o envio de novos comandos até o tween terminar

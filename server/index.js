@@ -18,7 +18,7 @@ const TILE = {
 
 const PLAYER_COLORS = [0xb0e0e6, 0xd8bfd8, 0xffdab9, 0xf8f8ff, 0xf0e68c, 0xf4500];
 const SPAWN_POINTS = [{ x: 1, y: 1 }, { x: 13, y: 1 }, { x: 1, y: 11 }, { x: 13, y: 11 }, { x: 1, y: 6 }, { x: 13, y: 6 }];
-let gameState = { map: [], players: {} };
+let gameState = { map: [], players: {}, matchStarted: false };
 
 function initializeMap() {
     gameState.map = [];
@@ -85,23 +85,29 @@ function handleExplosion(bx, by, socketId) {
         if (affected.some(tile => tile.x === p.x && tile.y === p.y)) {
             io.emit('playerKilled', p.id);
             delete gameState.players[p.id];
+            checkWinner();
         }
     });
 }
 
 io.on('connection', (socket) => {
-    socket.on('requestMap', () => {
+    socket.on('requestMap', (data) => {
         if (Object.keys(gameState.players).length === 0) initializeMap(); // Reinicia mapa se for o primeiro
         const playerIndex = Object.keys(gameState.players).length % 6;
         const spawn = SPAWN_POINTS[playerIndex];
+        const playerName = data?.name || "Player_" + socket.id.substr(0,4);
         gameState.players[socket.id] = {
-            id: socket.id, x: spawn.x, y: spawn.y, color: PLAYER_COLORS[playerIndex % PLAYER_COLORS.length],
+            id: socket.id, name: playerName, x: spawn.x, y: spawn.y, color: PLAYER_COLORS[playerIndex % PLAYER_COLORS.length],
             currentBombs: 0, maxBombs: 1, range: 1, moveDuration: 150, speedLevel: 1
         };
+        // Se houver mais de 1 jogador, a partida é considerada "em andamento"
+        if (Object.keys(gameState.players).length >= 2) gameState.matchStarted = true;
         socket.emit('mapInit', { grid: gameState.map, existingPlayers: gameState.players });
         socket.broadcast.emit('newPlayer', gameState.players[socket.id]);
         sendStats(socket.id);
     });
+
+    
 
     socket.on('playerMovement', (data) => {
         const p = gameState.players[socket.id];
@@ -144,6 +150,15 @@ io.on('connection', (socket) => {
         io.emit('removePlayer', socket.id);
     });
 });
+
+// Lógica de verificação de vencedor (chame isso sempre que alguém morrer)
+function checkWinner() {
+    const alive = Object.values(gameState.players);
+    if (gameState.matchStarted && alive.length === 1) {
+        io.emit('victory', { name: alive[0].name, id: alive[0].id });
+        gameState.matchStarted = false; // Reseta o estado
+    }
+}
 
 app.use(express.static(path.join(__dirname, '..', 'client')));
 server.listen(PORT, () => console.log(`Servidor rodando na porta ${PORT}`));
